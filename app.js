@@ -138,6 +138,228 @@
   let qr = null;
   const renderTarget = $("qr-render");
 
+  // ---------- Themed renderers (paper: hand-drawn modules, stars: star-shaped modules) ----------
+  function hashSeed(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return h >>> 0;
+  }
+
+  function mulberry32(seed) {
+    let s = seed;
+    return () => {
+      s |= 0;
+      s = (s + 0x6d2b79f5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildQrMatrix(data, ecc) {
+    const qrObj = qrcode(0, ecc);
+    qrObj.addData(data || " ");
+    qrObj.make();
+    const count = qrObj.getModuleCount();
+    const matrix = [];
+    for (let r = 0; r < count; r++) {
+      const row = [];
+      for (let c = 0; c < count; c++) row.push(qrObj.isDark(r, c));
+      matrix.push(row);
+    }
+    return { matrix, count };
+  }
+
+  // Per ISO/IEC 18004: the 7x7 finder pattern + its 1-module separator ring,
+  // at each of the three corners. Rendered explicitly (see finder() below),
+  // so the general module loop must leave this area alone entirely.
+  function isCornerFinderBox(r, c, count) {
+    return (r < 8 && c < 8) || (r < 8 && c >= count - 8) || (r >= count - 8 && c < 8);
+  }
+
+  // Alignment pattern center coordinates by QR version (1-40), from the
+  // official ISO/IEC 18004 Annex E table.
+  const ALIGNMENT_POSITION_TABLE = [
+    [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50],
+    [6, 30, 54], [6, 32, 58], [6, 34, 62], [6, 26, 46, 66], [6, 26, 48, 70], [6, 26, 50, 74], [6, 30, 54, 78],
+    [6, 30, 56, 82], [6, 30, 58, 86], [6, 34, 62, 90], [6, 28, 50, 72, 94], [6, 26, 50, 74, 98], [6, 30, 54, 78, 102],
+    [6, 28, 54, 80, 106], [6, 32, 58, 84, 110], [6, 30, 58, 86, 114], [6, 34, 62, 90, 118], [6, 26, 50, 74, 98, 122],
+    [6, 30, 54, 78, 102, 126], [6, 26, 52, 78, 104, 130], [6, 30, 56, 82, 108, 134], [6, 34, 60, 86, 112, 138],
+    [6, 30, 58, 86, 114, 142], [6, 34, 62, 90, 118, 146], [6, 30, 54, 78, 102, 126, 150], [6, 24, 50, 76, 102, 128, 154],
+    [6, 28, 54, 80, 106, 132, 158], [6, 32, 58, 84, 110, 136, 162], [6, 26, 54, 82, 110, 138, 166], [6, 30, 58, 86, 114, 142, 170],
+  ];
+
+  // Timing patterns (row/col 6), the two format-info strips (row/col 8,
+  // including the permanently-dark module), and alignment pattern squares
+  // must keep their exact light/dark value and a crisp square shape — a
+  // decoder's grid calibration and masking both depend on them. Only plain
+  // data/error-correction codeword modules are safe to decorate.
+  function isStructuralModule(r, c, count, alignmentCenters) {
+    if (r === 6 || c === 6) return true;
+    if (r === 8 && (c < 9 || c >= count - 8)) return true;
+    if (c === 8 && (r < 9 || r >= count - 8)) return true;
+    for (const pr of alignmentCenters) {
+      for (const pc of alignmentCenters) {
+        if (Math.abs(r - pr) <= 2 && Math.abs(c - pc) <= 2) return true;
+      }
+    }
+    return false;
+  }
+
+  function gradientDefSvg(id, dotsOptions) {
+    if (!dotsOptions.gradient) return { fillAttr: dotsOptions.color, defs: "" };
+    const g = dotsOptions.gradient;
+    if (g.type === "radial") {
+      return {
+        fillAttr: `url(#${id})`,
+        defs: `<radialGradient id="${id}" cx="50%" cy="50%" r="70%"><stop offset="0" stop-color="${g.colorStops[0].color}"/><stop offset="1" stop-color="${g.colorStops[1].color}"/></radialGradient>`,
+      };
+    }
+    const dx = Math.cos(g.rotation);
+    const dy = Math.sin(g.rotation);
+    const x1 = 50 - dx * 50, y1 = 50 - dy * 50, x2 = 50 + dx * 50, y2 = 50 + dy * 50;
+    return {
+      fillAttr: `url(#${id})`,
+      defs: `<linearGradient id="${id}" x1="${x1}%" y1="${y1}%" x2="${x2}%" y2="${y2}%"><stop offset="0" stop-color="${g.colorStops[0].color}"/><stop offset="1" stop-color="${g.colorStops[1].color}"/></linearGradient>`,
+    };
+  }
+
+  function starPath(cx, cy, outerR, innerR) {
+    const points = 5;
+    const step = Math.PI / points;
+    let d = "";
+    for (let i = 0; i < points * 2; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const angle = -Math.PI / 2 + i * step;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      d += (i === 0 ? "M" : "L") + x.toFixed(2) + "," + y.toFixed(2) + " ";
+    }
+    return d + "Z";
+  }
+
+  function sketchRectPath(x, y, size, rand) {
+    const j = size * 0.26;
+    const bow = size * 0.1;
+    const corner = (cx, cy) => [cx + (rand() - 0.5) * j, cy + (rand() - 0.5) * j];
+    const [x1, y1] = corner(x, y);
+    const [x2, y2] = corner(x + size, y);
+    const [x3, y3] = corner(x + size, y + size);
+    const [x4, y4] = corner(x, y + size);
+    const mid = (a, b, off) => [(a[0] + b[0]) / 2 + (rand() - 0.5) * off, (a[1] + b[1]) / 2 + (rand() - 0.5) * off];
+    const m12 = mid([x1, y1], [x2, y2], bow);
+    const m23 = mid([x2, y2], [x3, y3], bow);
+    const m34 = mid([x3, y3], [x4, y4], bow);
+    const m41 = mid([x4, y4], [x1, y1], bow);
+    const p = (n) => n.toFixed(2);
+    return `M${p(x1)},${p(y1)} Q${p(m12[0])},${p(m12[1])} ${p(x2)},${p(y2)} Q${p(m23[0])},${p(m23[1])} ${p(x3)},${p(y3)} Q${p(m34[0])},${p(m34[1])} ${p(x4)},${p(y4)} Q${p(m41[0])},${p(m41[1])} ${p(x1)},${p(y1)} Z`;
+  }
+
+  // Renders the QR as a fully custom SVG: wobbly hand-drawn squares for the
+  // "paper" theme, five-point stars for the "stars" theme. Finder patterns
+  // stay plain rounded squares so the code keeps scanning reliably.
+  function renderThemedQrSvg(data, ecc, theme, requestedSize, dotsOptions, cornerSquareColor, cornerDotColor, bgColor, logoDataUrl, logoSizeFraction, logoBg) {
+    const { matrix, count } = buildQrMatrix(data, ecc);
+    const quiet = 4;
+    const total = count + quiet * 2;
+    // Dense data (many modules) needs more pixels per module than sparse
+    // data for the sketch/star shapes to stay reliably scannable at low
+    // resolution, so the rendered size can exceed the requested one.
+    const size = Math.max(requestedSize, total * 10);
+    const cell = size / total;
+    const rand = mulberry32(hashSeed(data + theme));
+    const gradId = "qrgrad-" + Math.abs(hashSeed(data)).toString(36);
+    const { fillAttr, defs } = gradientDefSvg(gradId, dotsOptions);
+
+    let logoStart = null;
+    let logoEnd = null;
+    if (logoDataUrl) {
+      const clearModules = Math.ceil(count * logoSizeFraction * 1.15);
+      logoStart = Math.floor((count - clearModules) / 2);
+      logoEnd = logoStart + clearModules;
+    }
+
+    const version = Math.round((count - 17) / 4);
+    const alignmentCenters = ALIGNMENT_POSITION_TABLE[version - 1] || [];
+
+    let modules = "";
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (!matrix[r][c] || isCornerFinderBox(r, c, count)) continue;
+        if (logoStart !== null && r >= logoStart && r < logoEnd && c >= logoStart && c < logoEnd) continue;
+        const x = (c + quiet) * cell;
+        const y = (r + quiet) * cell;
+        if (isStructuralModule(r, c, count, alignmentCenters)) {
+          modules += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" fill="${fillAttr}"/>`;
+        } else if (theme === "stars") {
+          modules += `<path d="${starPath(x + cell / 2, y + cell / 2, cell * 0.62, cell * 0.32)}" fill="${fillAttr}"/>`;
+        } else {
+          modules += `<path d="${sketchRectPath(x + cell * 0.08, y + cell * 0.08, cell * 0.84, rand)}" fill="${fillAttr}"/>`;
+        }
+      }
+    }
+
+    const innerBg = bgColor === "transparent" ? "#ffffff" : bgColor;
+    const finder = (originR, originC) => {
+      const ox = (originC + quiet) * cell;
+      const oy = (originR + quiet) * cell;
+      return `<rect x="${ox}" y="${oy}" width="${cell * 7}" height="${cell * 7}" rx="${cell * 1.2}" fill="${cornerSquareColor}"/>
+        <rect x="${ox + cell}" y="${oy + cell}" width="${cell * 5}" height="${cell * 5}" rx="${cell * 0.9}" fill="${innerBg}"/>
+        <rect x="${ox + cell * 2}" y="${oy + cell * 2}" width="${cell * 3}" height="${cell * 3}" rx="${cell * 0.6}" fill="${cornerDotColor}"/>`;
+    };
+    const finders = finder(0, 0) + finder(0, count - 7) + finder(count - 7, 0);
+
+    let logoMarkup = "";
+    if (logoDataUrl && logoStart !== null) {
+      const lx = (logoStart + quiet) * cell;
+      const lsize = (logoEnd - logoStart) * cell;
+      if (logoBg) {
+        logoMarkup += `<rect x="${lx - cell * 0.3}" y="${lx - cell * 0.3}" width="${lsize + cell * 0.6}" height="${lsize + cell * 0.6}" rx="${cell}" fill="#ffffff"/>`;
+      }
+      logoMarkup += `<image href="${logoDataUrl}" x="${lx}" y="${lx}" width="${lsize}" height="${lsize}" preserveAspectRatio="xMidYMid slice"/>`;
+    }
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs>${defs}</defs><rect width="${size}" height="${size}" fill="${bgColor === "transparent" ? "none" : bgColor}"/>${modules}${finders}${logoMarkup}</svg>`;
+  }
+
+  function themedDotsOptions() {
+    const useGradient = $("s-gradient-toggle").checked;
+    return useGradient
+      ? {
+          color: null,
+          gradient: {
+            type: $("s-grad-type").value,
+            rotation: (parseInt($("s-grad-rotation").value, 10) * Math.PI) / 180,
+            colorStops: [
+              { offset: 0, color: $("s-grad-c1").value },
+              { offset: 1, color: $("s-grad-c2").value },
+            ],
+          },
+        }
+      : { color: $("s-color-dots").value, gradient: null };
+  }
+
+  function buildThemedSvgString(theme, size) {
+    const ecc = $("s-ecc").value;
+    const dotsOptions = themedDotsOptions();
+    const cornerSquareColor = dotsOptions.color || dotsOptions.gradient.colorStops[0].color;
+    const cornerDotColor = dotsOptions.color || dotsOptions.gradient.colorStops[1].color;
+    const bg = $("s-bg-transparent").checked ? "transparent" : $("s-color-bg").value;
+    return renderThemedQrSvg(
+      buildData() || " ",
+      ecc,
+      theme,
+      size,
+      dotsOptions,
+      cornerSquareColor,
+      cornerDotColor,
+      bg,
+      window.__qrLogoDataUrl,
+      parseFloat($("s-logo-size").value),
+      $("s-logo-bg").checked
+    );
+  }
+
   function currentOptions() {
     const size = parseInt($("s-size").value, 10);
     const margin = parseInt($("s-margin").value, 10);
@@ -190,15 +412,26 @@
   }
 
   function render() {
-    const options = currentOptions();
+    const theme = $("s-page-bg").value;
     renderTarget.innerHTML = "";
 
-    if (!qr) {
-      qr = new QRCodeStyling(options);
-      qr.append(renderTarget);
+    if (theme === "paper" || theme === "stars") {
+      const size = parseInt($("s-size").value, 10);
+      renderTarget.innerHTML = buildThemedSvgString(theme, size);
+      qr = null;
     } else {
-      qr.update(options);
+      const options = currentOptions();
+      if (!qr) {
+        qr = new QRCodeStyling(options);
+        qr.append(renderTarget);
+      } else {
+        qr.update(options);
+      }
     }
+
+    ["s-dots-type", "s-corners-square-type", "s-corners-dot-type"].forEach((id) => {
+      $(id).disabled = theme !== "none";
+    });
 
     $("dataPreviewHint").textContent = `Data: ${(buildData() || "").slice(0, 120)}`;
 
@@ -409,6 +642,19 @@
     }
   }
 
+  // The raw QR image with no background theme or frame baked in yet: the
+  // qr-code-styling render for the default look, or our own sketch/star SVG
+  // rasterized to an image for the "paper" / "stars" themes.
+  async function getBaseQrImage() {
+    const theme = $("s-page-bg").value;
+    if (theme === "paper" || theme === "stars") {
+      const size = parseInt($("s-size").value, 10);
+      const svgString = buildThemedSvgString(theme, size);
+      return blobToImage(new Blob([svgString], { type: "image/svg+xml" }));
+    }
+    return blobToImage(await qr.getRawData("png"));
+  }
+
   // Returns a canvas with the selected background theme and frame/label baked
   // in, or null when neither is active (callers then use the raw QR export).
   async function getComposedCanvas() {
@@ -417,7 +663,7 @@
     if (theme === "none" && frame === "none") return null;
 
     const frameText = $("s-frame-text").value || "";
-    const qrImg = await blobToImage(await qr.getRawData("png"));
+    const qrImg = await getBaseQrImage();
     const qrSize = qrImg.width;
 
     const framePad = frame === "scan-me" ? Math.round(qrSize * 0.12) : 0;
@@ -484,7 +730,7 @@
     const composed = await getComposedCanvas();
 
     if (format === "pdf") {
-      const canvas = composed || await blobToImage(await qr.getRawData("png")).then((img) => {
+      const canvas = composed || await getBaseQrImage().then((img) => {
         const c = document.createElement("canvas");
         c.width = img.width;
         c.height = img.height;
