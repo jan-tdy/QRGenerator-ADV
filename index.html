@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QR Generator ADV</title>
+<meta name="description" content="Free, open-source QR code generator with logos, patterns, gradients, backgrounds and PNG/SVG/PDF export. Runs entirely in your browser." />
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <img class="brand-mark" src="assets/logo.svg" alt="" width="28" height="28" />
+    <span class="brand-name">QR Generator <strong>ADV</strong></span>
+  </div>
+  <div class="topbar-actions">
+    <button id="themeToggle" class="icon-btn" type="button" title="Toggle dark / light theme">Theme</button>
+    <a class="icon-btn" href="https://github.com/jan-tdy/qrgenerator-adv" target="_blank" rel="noopener">Source</a>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- LEFT: data input -->
+  <section class="panel panel-data" aria-label="QR code content">
+    <h2>Content</h2>
+    <div class="tabs" id="dataTabs" role="tablist">
+      <button class="tab active" data-type="url" role="tab">URL</button>
+      <button class="tab" data-type="text" role="tab">Text</button>
+      <button class="tab" data-type="wifi" role="tab">Wi-Fi</button>
+      <button class="tab" data-type="vcard" role="tab">Contact</button>
+      <button class="tab" data-type="email" role="tab">Email</button>
+      <button class="tab" data-type="sms" role="tab">SMS</button>
+      <button class="tab" data-type="tel" role="tab">Phone</button>
+      <button class="tab" data-type="geo" role="tab">Location</button>
+      <button class="tab" data-type="event" role="tab">Event</button>
+    </div>
+
+    <div class="tab-panels">
+      <div class="tab-panel active" data-panel="url">
+        <label>Website address
+          <input type="text" id="f-url" placeholder="https://example.com" value="https://example.com" />
+        </label>
+      </div>
+
+      <div class="tab-panel" data-panel="text">
+        <label>Plain text
+          <textarea id="f-text" rows="4" placeholder="Any text…"></textarea>
+        </label>
+      </div>
+
+      <div class="tab-panel" data-panel="wifi">
+        <label>Network name (SSID)
+          <input type="text" id="f-wifi-ssid" placeholder="MyWiFi" />
+        </label>
+        <label>Password
+          <input type="text" id="f-wifi-pass" placeholder="password123" />
+        </label>
+        <label>Security
+          <select id="f-wifi-enc">
+            <option value="WPA">WPA/WPA2/WPA3</option>
+            <option value="WEP">WEP</option>
+            <option value="nopass">None</option>
+          </select>
+        </label>
+        <label class="checkbox"><input type="checkbox" id="f-wifi-hidden" /> Hidden network</label>
+      </div>
+
+      <div class="tab-panel" data-panel="vcard">
+        <div class="grid-2">
+          <label>First name<input type="text" id="f-vc-first" placeholder="John" /></label>
+          <label>Last name<input type="text" id="f-vc-last" placeholder="Smith" /></label>
+        </div>
+        <label>Company<input type="text" id="f-vc-org" placeholder="JapySoft" /></label>
+        <label>Job title<input type="text" id="f-vc-title" placeholder="Developer" /></label>
+        <div class="grid-2">
+          <label>Phone<input type="tel" id="f-vc-phone" placeholder="+34 600 000 000" /></label>
+          <label>Email<input type="email" id="f-vc-email" placeholder="john@example.com" /></label>
+        </div>
+        <label>Website<input type="text" id="f-vc-url" placeholder="https://example.com" /></label>
+        <label>Address<input type="text" id="f-vc-address" placeholder="Street, City, Country" /></label>
+      </div>
+
+      <div class="tab-panel" data-panel="email">
+        <label>To<input type="email" id="f-email-to" placeholder="recipient@example.com" /></label>
+        <label>Subject<input type="text" id="f-email-subject" placeholder="Subject line" /></label>
+        <label>Message<textarea id="f-email-body" rows="3"></textarea></label>
+      </div>
+
+      <div class="tab-panel" data-panel="sms">
+        <label>Phone number<input type="tel" id="f-sms-phone" placeholder="+34 600 000 000" /></label>
+        <label>Message<textarea id="f-sms-body" rows="3"></textarea></label>
+      </div>
+
+      <div class="tab-panel" data-panel="tel">
+        <label>Phone number<input type="tel" id="f-tel" placeholder="+34 600 000 000" /></label>
+      </div>
+
+      <div class="tab-panel" data-panel="geo">
+        <div class="grid-2">
+          <label>Latitude<input type="text" id="f-geo-lat" placeholder="37.8847" /></label>
+          <label>Longitude<input type="text" id="f-geo-lng" placeholder="-4.7757" /></label>
+        </div>
+        <button class="btn-secondary" id="geoLocateBtn" type="button">Use my current location</button>
+      </div>
+
+      <div class="tab-panel" data-panel="event">
+        <label>Event title<input type="text" id="f-ev-title" placeholder="Meeting" /></label>
+        <label>Location<input type="text" id="f-ev-loc" placeholder="Piconcillo, Córdoba" /></label>
+        <div class="grid-2">
+          <label>Start<input type="datetime-local" id="f-ev-start" /></label>
+          <label>End<input type="datetime-local" id="f-ev-end" /></label>
+        </div>
+        <label>Description<textarea id="f-ev-desc" rows="2"></textarea></label>
+      </div>
+    </div>
+  </section>
+
+  <!-- CENTER: live preview -->
+  <section class="panel panel-preview" aria-label="QR code preview">
+    <div class="preview-canvas-wrap" id="previewWrap" data-bg="none" data-frame="none">
+      <div id="qr-render"></div>
+      <p id="frameLabel" class="frame-label hidden"></p>
+    </div>
+    <div class="export-row">
+      <label>Format
+        <select id="exportFormat">
+          <option value="png">PNG</option>
+          <option value="jpeg">JPG</option>
+          <option value="webp">WebP</option>
+          <option value="svg">SVG (vector)</option>
+          <option value="pdf">PDF</option>
+        </select>
+      </label>
+      <button id="downloadBtn" class="btn-primary" type="button">Download</button>
+      <button id="copyBtn" class="btn-secondary" type="button">Copy image</button>
+    </div>
+    <p class="hint" id="dataPreviewHint"></p>
+  </section>
+
+  <!-- RIGHT: style controls -->
+  <section class="panel panel-style" aria-label="Appearance">
+    <h2>Appearance</h2>
+
+    <div class="field-group">
+      <label>Size <span id="sizeVal">320</span> px
+        <input type="range" id="s-size" min="150" max="1000" step="10" value="320" />
+      </label>
+      <div class="grid-2">
+        <label>Margin
+          <input type="range" id="s-margin" min="0" max="40" step="1" value="12" />
+        </label>
+        <label>Error correction
+          <select id="s-ecc">
+            <option value="L">L — low (7%)</option>
+            <option value="M" selected>M — medium (15%)</option>
+            <option value="Q">Q — quartile (25%)</option>
+            <option value="H">H — high (30%)</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <h3>Dot pattern</h3>
+      <select id="s-dots-type">
+        <option value="square">Square</option>
+        <option value="dots" selected>Dots</option>
+        <option value="rounded">Rounded</option>
+        <option value="extra-rounded">Extra rounded</option>
+        <option value="classy">Classy</option>
+        <option value="classy-rounded">Classy rounded</option>
+      </select>
+
+      <h3>Corner squares (outer)</h3>
+      <select id="s-corners-square-type">
+        <option value="square">Square</option>
+        <option value="dot">Dot</option>
+        <option value="extra-rounded" selected>Extra rounded</option>
+      </select>
+
+      <h3>Corner dots (inner)</h3>
+      <select id="s-corners-dot-type">
+        <option value="square">Square</option>
+        <option value="dot" selected>Dot</option>
+      </select>
+    </div>
+
+    <div class="field-group">
+      <h3>Colors</h3>
+      <label class="checkbox"><input type="checkbox" id="s-gradient-toggle" /> Use gradient</label>
+
+      <div id="soloColorRow">
+        <label>Dot color <input type="color" id="s-color-dots" value="#1f2937" /></label>
+      </div>
+      <div id="gradientColorRow" class="hidden">
+        <div class="grid-2">
+          <label>Color 1 <input type="color" id="s-grad-c1" value="#4f46e5" /></label>
+          <label>Color 2 <input type="color" id="s-grad-c2" value="#0891b2" /></label>
+        </div>
+        <label>Gradient type
+          <select id="s-grad-type">
+            <option value="linear">Linear</option>
+            <option value="radial">Radial</option>
+          </select>
+        </label>
+        <label>Angle <input type="range" id="s-grad-rotation" min="0" max="360" value="45" /></label>
+      </div>
+
+      <label class="checkbox"><input type="checkbox" id="s-bg-transparent" /> Transparent background</label>
+      <label id="bgColorLabel">Background color <input type="color" id="s-color-bg" value="#ffffff" /></label>
+    </div>
+
+    <div class="field-group">
+      <h3>Logo / center image</h3>
+      <input type="file" id="s-logo-file" accept="image/*" />
+      <button class="btn-secondary small" id="s-logo-clear" type="button">Remove logo</button>
+      <label>Logo size
+        <input type="range" id="s-logo-size" min="0.1" max="0.5" step="0.01" value="0.2" />
+      </label>
+      <label class="checkbox"><input type="checkbox" id="s-logo-bg" checked /> White pad behind logo (readability)</label>
+    </div>
+
+    <div class="field-group">
+      <h3>Background theme</h3>
+      <select id="s-page-bg">
+        <option value="none" selected>None (plain)</option>
+        <option value="paper">Paper / hand-drawn</option>
+        <option value="stars">Starry night</option>
+      </select>
+
+      <h3>Frame &amp; label</h3>
+      <select id="s-frame">
+        <option value="none">No frame</option>
+        <option value="scan-me">"Scan me" frame</option>
+        <option value="label-bottom">Custom text below code</option>
+      </select>
+      <input type="text" id="s-frame-text" placeholder="Scan me" value="Scan me" />
+    </div>
+
+    <div class="field-group presets">
+      <h3>Presets</h3>
+      <div class="preset-row">
+        <button class="btn-secondary small" data-preset="classic">Classic</button>
+        <button class="btn-secondary small" data-preset="rounded">Rounded</button>
+        <button class="btn-secondary small" data-preset="dots">Dotted</button>
+        <button class="btn-secondary small" data-preset="gradient">Gradient</button>
+      </div>
+      <div class="preset-row">
+        <button class="btn-secondary small" id="saveLocalBtn" type="button">Save settings</button>
+        <button class="btn-secondary small" id="loadLocalBtn" type="button">Load settings</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <p>
+    Free and open source (MIT license). Everything runs client-side in your browser — no data is
+    ever sent to a server. Built on
+    <a href="https://github.com/kozakdenys/qr-code-styling" target="_blank" rel="noopener">qr-code-styling</a>,
+    <a href="https://github.com/kazuhikoarase/qrcode-generator" target="_blank" rel="noopener">qrcode-generator</a>
+    and <a href="https://github.com/parallax/jsPDF" target="_blank" rel="noopener">jsPDF</a> (all MIT).
+  </p>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
