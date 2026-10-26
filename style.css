@@ -196,6 +196,7 @@ input[type="file"] { width: 100%; font-size: 13px; margin-bottom: 8px; }
   width: 100%;
   min-height: 420px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius);
@@ -203,11 +204,31 @@ input[type="file"] { width: 100%; font-size: 13px; margin-bottom: 8px; }
   background: var(--bg);
   border: 1px solid var(--border);
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
+
+.preview-canvas-wrap[data-frame="scan-me"] { padding: 40px; }
 
 #qr-render { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; }
 #qr-render canvas, #qr-render svg, #qr-render img { display: block; max-width: 100%; }
+
+.frame-label {
+  position: relative;
+  z-index: 1;
+  margin: 10px 0 0;
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.preview-canvas-wrap[data-bg="stars"] .frame-label { color: #ffffff; }
+
+.preview-canvas-wrap[data-frame="scan-me"] #qr-render {
+  outline: 2px dashed #1a1d23;
+  outline-offset: 12px;
+  border-radius: 6px;
+}
+.preview-canvas-wrap[data-bg="stars"][data-frame="scan-me"] #qr-render { outline-color: #ffffff; }
 
 /* --- Background theme: paper / hand-drawn --- */
 .preview-canvas-wrap[data-bg="paper"] {

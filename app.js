@@ -112,7 +112,12 @@
         const start = $("f-ev-start").value;
         const end = $("f-ev-end").value;
         const lines = [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "PRODID:-//QR Generator ADV//EN",
           "BEGIN:VEVENT",
+          `UID:${Date.now()}@qrgenerator-adv`,
+          `DTSTAMP:${toICSDate(new Date().toISOString())}`,
           `SUMMARY:${escapeField(title)}`,
         ];
         if (loc) lines.push(`LOCATION:${escapeField(loc)}`);
@@ -120,6 +125,7 @@
         if (start) lines.push(`DTSTART:${toICSDate(start)}`);
         if (end) lines.push(`DTEND:${toICSDate(end)}`);
         lines.push("END:VEVENT");
+        lines.push("END:VCALENDAR");
         return lines.join("\n");
       }
 
@@ -170,8 +176,8 @@
       backgroundOptions: transparent ? { color: "transparent" } : { color: $("s-color-bg").value },
       imageOptions: {
         crossOrigin: "anonymous",
-        margin: 4,
-        hideBackgroundDots: true,
+        margin: $("s-logo-bg").checked ? 6 : 0,
+        hideBackgroundDots: $("s-logo-bg").checked,
         imageSize: parseFloat($("s-logo-size").value),
       },
     };
@@ -187,11 +193,6 @@
     const options = currentOptions();
     renderTarget.innerHTML = "";
 
-    if (options.image && $("s-logo-bg").checked) {
-      // qr-code-styling has no native "white pad" toggle; we approximate
-      // readability by keeping hideBackgroundDots on (already set above).
-    }
-
     if (!qr) {
       qr = new QRCodeStyling(options);
       qr.append(renderTarget);
@@ -200,6 +201,17 @@
     }
 
     $("dataPreviewHint").textContent = `Data: ${(buildData() || "").slice(0, 120)}`;
+
+    const frame = $("s-frame").value;
+    const frameText = $("s-frame-text").value || "";
+    $("previewWrap").dataset.frame = frame;
+    const labelEl = $("frameLabel");
+    if (frame !== "none" && frameText) {
+      labelEl.textContent = frameText;
+      labelEl.classList.remove("hidden");
+    } else {
+      labelEl.classList.add("hidden");
+    }
   }
 
   let updateTimer = null;
@@ -325,33 +337,189 @@
     render();
   });
 
+  // ---------- Composite background theme + frame/label on top of the raw QR ----------
+  function blobToImage(blob) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+      img.src = url;
+    });
+  }
+
+  function canvasToBlob(canvas, mime, quality) {
+    return new Promise((resolve) => canvas.toBlob(resolve, mime, quality));
+  }
+
+  function drawRoundedRect(ctx, x, y, w, h, r, fill) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawThemeBackground(ctx, w, h, theme) {
+    if (theme === "paper") {
+      ctx.fillStyle = "#f1ead9";
+      ctx.fillRect(0, 0, w, h);
+      ctx.save();
+      ctx.strokeStyle = "rgba(120,100,70,0.3)";
+      ctx.lineWidth = 1;
+      for (let y = 20; y < h; y += 26) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.save();
+      ctx.setLineDash([w * 0.012, w * 0.008]);
+      ctx.lineWidth = Math.max(3, w * 0.008);
+      ctx.strokeStyle = "#b8a97e";
+      ctx.strokeRect(4, 4, w - 8, h - 8);
+      ctx.restore();
+    } else if (theme === "stars") {
+      const grad = ctx.createRadialGradient(w / 2, 0, 0, w / 2, 0, Math.max(w, h));
+      grad.addColorStop(0, "#1b2140");
+      grad.addColorStop(1, "#0a0c1a");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, w, h);
+      let seed = 42;
+      const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+      ctx.fillStyle = "#ffffff";
+      for (let i = 0; i < 60; i++) {
+        const x = rand() * w;
+        const y = rand() * h;
+        const r = rand() * 1.4 + 0.3;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (!$("s-bg-transparent").checked) {
+      ctx.fillStyle = $("s-color-bg").value || "#ffffff";
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+
+  // Returns a canvas with the selected background theme and frame/label baked
+  // in, or null when neither is active (callers then use the raw QR export).
+  async function getComposedCanvas() {
+    const theme = $("s-page-bg").value;
+    const frame = $("s-frame").value;
+    if (theme === "none" && frame === "none") return null;
+
+    const frameText = $("s-frame-text").value || "";
+    const qrImg = await blobToImage(await qr.getRawData("png"));
+    const qrSize = qrImg.width;
+
+    const framePad = frame === "scan-me" ? Math.round(qrSize * 0.12) : 0;
+    const labelHeight = frame !== "none" && frameText ? Math.round(qrSize * 0.14) : 0;
+    const outerPad = theme !== "none" ? Math.round(qrSize * 0.08) : 0;
+
+    const canvasW = qrSize + 2 * framePad + 2 * outerPad;
+    const canvasH = qrSize + 2 * framePad + 2 * outerPad + labelHeight;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = canvasW;
+    canvas.height = canvasH;
+    const ctx = canvas.getContext("2d");
+
+    drawThemeBackground(ctx, canvasW, canvasH, theme);
+
+    const qrX = (canvasW - qrSize) / 2;
+    const qrY = outerPad + framePad;
+
+    if (theme === "stars") {
+      const pad = Math.round(qrSize * 0.05);
+      drawRoundedRect(ctx, qrX - pad, qrY - pad, qrSize + pad * 2, qrSize + pad * 2, qrSize * 0.03, "#ffffff");
+    }
+
+    if (frame === "scan-me") {
+      ctx.save();
+      ctx.setLineDash([qrSize * 0.015, qrSize * 0.01]);
+      ctx.lineWidth = Math.max(2, qrSize * 0.01);
+      ctx.strokeStyle = theme === "stars" ? "#ffffff" : "#1a1d23";
+      ctx.strokeRect(qrX - framePad * 0.6, qrY - framePad * 0.6, qrSize + framePad * 1.2, qrSize + framePad * 1.2);
+      ctx.restore();
+    }
+
+    ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+
+    if (labelHeight > 0) {
+      ctx.save();
+      ctx.fillStyle = theme === "stars" ? "#ffffff" : "#1a1d23";
+      ctx.font = `600 ${Math.round(qrSize * 0.065)}px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(frameText, canvasW / 2, canvasH - outerPad - labelHeight / 2);
+      ctx.restore();
+    }
+
+    return canvas;
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   // ---------- Export ----------
   $("downloadBtn").addEventListener("click", async () => {
     const format = $("exportFormat").value;
     const name = `qrcode-${Date.now()}`;
+    const composed = await getComposedCanvas();
 
     if (format === "pdf") {
-      const rawData = await qr.getRawData("png");
-      const blobUrl = URL.createObjectURL(rawData);
-      const img = new Image();
-      img.onload = () => {
-        const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF({ unit: "pt", format: [img.width, img.height] });
-        pdf.addImage(img, "PNG", 0, 0, img.width, img.height);
-        pdf.save(`${name}.pdf`);
-        URL.revokeObjectURL(blobUrl);
-      };
-      img.src = blobUrl;
+      const canvas = composed || await blobToImage(await qr.getRawData("png")).then((img) => {
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        c.getContext("2d").drawImage(img, 0, 0);
+        return c;
+      });
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ unit: "pt", format: [canvas.width, canvas.height] });
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 0, 0, canvas.width, canvas.height);
+      pdf.save(`${name}.pdf`);
       return;
     }
 
-    qr.download({ name, extension: format });
+    if (!composed) {
+      qr.download({ name, extension: format });
+      return;
+    }
+
+    if (format === "svg") {
+      const pngDataUrl = composed.toDataURL("image/png");
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${composed.width}" height="${composed.height}" viewBox="0 0 ${composed.width} ${composed.height}"><image href="${pngDataUrl}" width="${composed.width}" height="${composed.height}"/></svg>`;
+      triggerDownload(new Blob([svg], { type: "image/svg+xml" }), `${name}.svg`);
+      return;
+    }
+
+    const mime = format === "jpeg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
+    const blob = await canvasToBlob(composed, mime, 0.92);
+    triggerDownload(blob, `${name}.${format === "jpeg" ? "jpg" : format}`);
   });
 
   $("copyBtn").addEventListener("click", async () => {
     try {
-      const rawData = await qr.getRawData("png");
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": rawData })]);
+      const composed = await getComposedCanvas();
+      const blob = composed ? await canvasToBlob(composed, "image/png") : await qr.getRawData("png");
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
     } catch (err) {
       console.warn("Clipboard copy failed:", err);
     }
