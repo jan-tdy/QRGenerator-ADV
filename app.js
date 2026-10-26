@@ -29,8 +29,16 @@
     });
   });
 
-  // ---------- Helpers to escape vCard / WiFi special chars ----------
-  const escapeField = (str = "") => str.replace(/([\\;,:])/g, "\\$1");
+  // ---------- Field escaping ----------
+  // WIFI: QR payloads (ZXing convention) use colon as a field delimiter, so
+  // literal colons in the SSID/password must be escaped along with \ ; and ,.
+  const escapeWifiField = (str = "") => str.replace(/([\\;,:])/g, "\\$1");
+
+  // vCard (RFC 6350) and iCalendar (RFC 5545 §3.3.11) TEXT values escape
+  // backslash, semicolon and comma, and encode real line breaks as a
+  // literal "\n" — colons are NOT escaped under either spec.
+  const escapeText = (str = "") =>
+    str.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r\n|\r|\n/g, "\\n");
 
   function pad2(n) { return String(n).padStart(2, "0"); }
   function toICSDate(value) {
@@ -50,8 +58,8 @@
         return $("f-text").value;
 
       case "wifi": {
-        const ssid = escapeField($("f-wifi-ssid").value);
-        const pass = escapeField($("f-wifi-pass").value);
+        const ssid = escapeWifiField($("f-wifi-ssid").value);
+        const pass = escapeWifiField($("f-wifi-pass").value);
         const enc = $("f-wifi-enc").value;
         const hidden = $("f-wifi-hidden").checked ? "true" : "false";
         const passPart = enc === "nopass" ? "" : `P:${pass};`;
@@ -70,15 +78,15 @@
         const lines = [
           "BEGIN:VCARD",
           "VERSION:3.0",
-          `N:${escapeField(last)};${escapeField(first)};;;`,
-          `FN:${escapeField(`${first} ${last}`.trim())}`,
+          `N:${escapeText(last)};${escapeText(first)};;;`,
+          `FN:${escapeText(`${first} ${last}`.trim())}`,
         ];
-        if (org) lines.push(`ORG:${escapeField(org)}`);
-        if (title) lines.push(`TITLE:${escapeField(title)}`);
+        if (org) lines.push(`ORG:${escapeText(org)}`);
+        if (title) lines.push(`TITLE:${escapeText(title)}`);
         if (phone) lines.push(`TEL;TYPE=CELL:${phone}`);
         if (email) lines.push(`EMAIL:${email}`);
         if (url) lines.push(`URL:${url}`);
-        if (address) lines.push(`ADR:;;${escapeField(address)};;;;`);
+        if (address) lines.push(`ADR:;;${escapeText(address)};;;;`);
         lines.push("END:VCARD");
         return lines.join("\n");
       }
@@ -111,17 +119,21 @@
         const desc = $("f-ev-desc").value;
         const start = $("f-ev-start").value;
         const end = $("f-ev-end").value;
+        // UID is derived from the event's own fields (not a timestamp) so it
+        // stays stable while the user tweaks QR styling, and only changes
+        // when the event itself changes, per RFC 5545 §3.8.4.7.
+        const uidSeed = hashSeed(`${title}|${loc}|${start}|${end}`).toString(36);
         const lines = [
           "BEGIN:VCALENDAR",
           "VERSION:2.0",
           "PRODID:-//QR Generator ADV//EN",
           "BEGIN:VEVENT",
-          `UID:${Date.now()}@qrgenerator-adv`,
+          `UID:${uidSeed}@qrgenerator-adv`,
           `DTSTAMP:${toICSDate(new Date().toISOString())}`,
-          `SUMMARY:${escapeField(title)}`,
+          `SUMMARY:${escapeText(title)}`,
         ];
-        if (loc) lines.push(`LOCATION:${escapeField(loc)}`);
-        if (desc) lines.push(`DESCRIPTION:${escapeField(desc)}`);
+        if (loc) lines.push(`LOCATION:${escapeText(loc)}`);
+        if (desc) lines.push(`DESCRIPTION:${escapeText(desc)}`);
         if (start) lines.push(`DTSTART:${toICSDate(start)}`);
         if (end) lines.push(`DTEND:${toICSDate(end)}`);
         lines.push("END:VEVENT");
@@ -319,7 +331,8 @@
       logoMarkup += `<image href="${logoDataUrl}" x="${lx}" y="${lx}" width="${lsize}" height="${lsize}" preserveAspectRatio="xMidYMid slice"/>`;
     }
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs>${defs}</defs><rect width="${size}" height="${size}" fill="${bgColor === "transparent" ? "none" : bgColor}"/>${modules}${finders}${logoMarkup}</svg>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><defs>${defs}</defs><rect width="${size}" height="${size}" fill="${bgColor === "transparent" ? "none" : bgColor}"/>${modules}${finders}${logoMarkup}</svg>`;
+    return { svg, size };
   }
 
   function themedDotsOptions() {
@@ -339,6 +352,8 @@
       : { color: $("s-color-dots").value, gradient: null };
   }
 
+  // Returns { svg, size } — size may exceed the requested value (see the
+  // pixel-per-module floor in renderThemedQrSvg above).
   function buildThemedSvgString(theme, size) {
     const ecc = $("s-ecc").value;
     const dotsOptions = themedDotsOptions();
@@ -417,7 +432,7 @@
 
     if (theme === "paper" || theme === "stars") {
       const size = parseInt($("s-size").value, 10);
-      renderTarget.innerHTML = buildThemedSvgString(theme, size);
+      renderTarget.innerHTML = buildThemedSvgString(theme, size).svg;
       qr = null;
     } else {
       const options = currentOptions();
@@ -649,8 +664,8 @@
     const theme = $("s-page-bg").value;
     if (theme === "paper" || theme === "stars") {
       const size = parseInt($("s-size").value, 10);
-      const svgString = buildThemedSvgString(theme, size);
-      return blobToImage(new Blob([svgString], { type: "image/svg+xml" }));
+      const { svg } = buildThemedSvgString(theme, size);
+      return blobToImage(new Blob([svg], { type: "image/svg+xml" }));
     }
     return blobToImage(await qr.getRawData("png"));
   }
@@ -668,7 +683,7 @@
 
     const framePad = frame === "scan-me" ? Math.round(qrSize * 0.12) : 0;
     const labelHeight = frame !== "none" && frameText ? Math.round(qrSize * 0.14) : 0;
-    const outerPad = theme !== "none" ? Math.round(qrSize * 0.08) : 0;
+    const outerPad = (theme !== "none" || frame !== "none") ? Math.round(qrSize * 0.08) : 0;
 
     const canvasW = qrSize + 2 * framePad + 2 * outerPad;
     const canvasH = qrSize + 2 * framePad + 2 * outerPad + labelHeight;
@@ -693,7 +708,7 @@
       ctx.setLineDash([qrSize * 0.015, qrSize * 0.01]);
       ctx.lineWidth = Math.max(2, qrSize * 0.01);
       ctx.strokeStyle = theme === "stars" ? "#ffffff" : "#1a1d23";
-      ctx.strokeRect(qrX - framePad * 0.6, qrY - framePad * 0.6, qrSize + framePad * 1.2, qrSize + framePad * 1.2);
+      ctx.strokeRect(qrX - framePad, qrY - framePad, qrSize + framePad * 2, qrSize + framePad * 2);
       ctx.restore();
     }
 
@@ -712,6 +727,92 @@
     return canvas;
   }
 
+  function escapeXml(str = "") {
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Pulls the child markup out of a complete <svg>...</svg> string so it can
+  // be re-embedded (as a nested <svg>) inside a larger composed document.
+  function extractSvgInner(svgString) {
+    const doc = new DOMParser().parseFromString(svgString, "image/svg+xml");
+    const serializer = new XMLSerializer();
+    let inner = "";
+    doc.documentElement.childNodes.forEach((node) => { inner += serializer.serializeToString(node); });
+    return inner;
+  }
+
+  // Builds the SVG export as real vector markup — background theme, frame,
+  // label and the QR itself all stay paths/shapes, never a rasterized
+  // bitmap, so "SVG (vector)" always means what it says.
+  async function composeSvgExport() {
+    const theme = $("s-page-bg").value;
+    const frame = $("s-frame").value;
+    const frameText = $("s-frame-text").value || "";
+
+    let baseSvgString, qrSize;
+    if (theme === "paper" || theme === "stars") {
+      const built = buildThemedSvgString(theme, parseInt($("s-size").value, 10));
+      baseSvgString = built.svg;
+      qrSize = built.size;
+    } else {
+      qrSize = parseInt($("s-size").value, 10);
+      baseSvgString = await (await qr.getRawData("svg")).text();
+    }
+
+    if (theme === "none" && frame === "none") return baseSvgString;
+
+    const innerMarkup = extractSvgInner(baseSvgString);
+    const framePad = frame === "scan-me" ? Math.round(qrSize * 0.12) : 0;
+    const labelHeight = frame !== "none" && frameText ? Math.round(qrSize * 0.14) : 0;
+    const outerPad = (theme !== "none" || frame !== "none") ? Math.round(qrSize * 0.08) : 0;
+    const canvasW = qrSize + 2 * framePad + 2 * outerPad;
+    const canvasH = qrSize + 2 * framePad + 2 * outerPad + labelHeight;
+    const qrX = (canvasW - qrSize) / 2;
+    const qrY = outerPad + framePad;
+
+    let bg = "";
+    if (theme === "paper") {
+      bg = `<rect width="${canvasW}" height="${canvasH}" fill="#f1ead9"/>`;
+      for (let y = 20; y < canvasH; y += 26) {
+        bg += `<line x1="0" y1="${y}" x2="${canvasW}" y2="${y}" stroke="rgba(120,100,70,0.3)" stroke-width="1"/>`;
+      }
+      bg += `<rect x="4" y="4" width="${canvasW - 8}" height="${canvasH - 8}" fill="none" stroke="#b8a97e" stroke-width="${Math.max(3, canvasW * 0.008)}" stroke-dasharray="${canvasW * 0.012},${canvasW * 0.008}"/>`;
+    } else if (theme === "stars") {
+      bg = `<defs><radialGradient id="pagegrad" cx="50%" cy="0%" r="75%"><stop offset="0" stop-color="#1b2140"/><stop offset="1" stop-color="#0a0c1a"/></radialGradient></defs><rect width="${canvasW}" height="${canvasH}" fill="url(#pagegrad)"/>`;
+      let seed = 42;
+      const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+      for (let i = 0; i < 60; i++) {
+        const x = rand() * canvasW, y = rand() * canvasH, r = rand() * 1.4 + 0.3;
+        bg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" fill="#ffffff"/>`;
+      }
+    } else if (!$("s-bg-transparent").checked) {
+      bg = `<rect width="${canvasW}" height="${canvasH}" fill="${$("s-color-bg").value || "#ffffff"}"/>`;
+    }
+
+    let whiteBoxUnderQr = "";
+    if (theme === "stars") {
+      const pad = Math.round(qrSize * 0.05);
+      whiteBoxUnderQr = `<rect x="${qrX - pad}" y="${qrY - pad}" width="${qrSize + pad * 2}" height="${qrSize + pad * 2}" rx="${qrSize * 0.03}" fill="#ffffff"/>`;
+    }
+
+    let frameBorder = "";
+    if (frame === "scan-me") {
+      const strokeW = Math.max(2, qrSize * 0.01);
+      const col = theme === "stars" ? "#ffffff" : "#1a1d23";
+      frameBorder = `<rect x="${qrX - framePad}" y="${qrY - framePad}" width="${qrSize + framePad * 2}" height="${qrSize + framePad * 2}" fill="none" stroke="${col}" stroke-width="${strokeW}" stroke-dasharray="${qrSize * 0.015},${qrSize * 0.01}"/>`;
+    }
+
+    let labelMarkup = "";
+    if (labelHeight > 0) {
+      const col = theme === "stars" ? "#ffffff" : "#1a1d23";
+      labelMarkup = `<text x="${canvasW / 2}" y="${canvasH - outerPad - labelHeight / 2}" fill="${col}" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="600" font-size="${Math.round(qrSize * 0.065)}" text-anchor="middle" dominant-baseline="middle">${escapeXml(frameText)}</text>`;
+    }
+
+    const qrGroup = `<g transform="translate(${qrX},${qrY})"><svg width="${qrSize}" height="${qrSize}" viewBox="0 0 ${qrSize} ${qrSize}">${innerMarkup}</svg></g>`;
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}">${bg}${whiteBoxUnderQr}${frameBorder}${qrGroup}${labelMarkup}</svg>`;
+  }
+
   function triggerDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -727,6 +828,13 @@
   $("downloadBtn").addEventListener("click", async () => {
     const format = $("exportFormat").value;
     const name = `qrcode-${Date.now()}`;
+
+    if (format === "svg") {
+      const svgString = await composeSvgExport();
+      triggerDownload(new Blob([svgString], { type: "image/svg+xml" }), `${name}.svg`);
+      return;
+    }
+
     const composed = await getComposedCanvas();
 
     if (format === "pdf") {
@@ -746,13 +854,6 @@
 
     if (!composed) {
       qr.download({ name, extension: format });
-      return;
-    }
-
-    if (format === "svg") {
-      const pngDataUrl = composed.toDataURL("image/png");
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${composed.width}" height="${composed.height}" viewBox="0 0 ${composed.width} ${composed.height}"><image href="${pngDataUrl}" width="${composed.width}" height="${composed.height}"/></svg>`;
-      triggerDownload(new Blob([svg], { type: "image/svg+xml" }), `${name}.svg`);
       return;
     }
 
